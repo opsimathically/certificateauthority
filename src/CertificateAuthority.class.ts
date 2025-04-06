@@ -27,9 +27,35 @@ import path from 'node:path';
 import Forge from 'node-forge';
 import { Deferred } from '@opsimathically/deferred';
 
+import {
+  CertificateStore,
+  ca_pems_record_t,
+  ca_signed_https_pems_record_t
+} from '@src/CertificateStore.class';
+
+type ca_loaded_context_t = {
+  name: string;
+  description: string;
+  ca_cert: ReturnType<typeof Forge.pki.createCertificate>;
+  ca_keys: ReturnType<typeof Forge.pki.rsa.generateKeyPair>;
+  ca_pems_sha1: string;
+  ca_attrs: string;
+  ca_cert_pem: string;
+  ca_private_key_pem: string;
+  ca_public_key_pem: string;
+  loaded_from_record: ca_pems_record_t;
+};
+
 // these values are returned to the https server for use
-type ca_mitm_https_server_pems_t = {
+type ca_signed_https_pems_t = {
+  ca_pems_sha1: string;
+  pems_sha1: string;
+  hosts: string[];
   hosts_unique_sha1: string;
+  loaded: {
+    cert: any;
+    keys: any;
+  };
   cert_pem: string;
   private_key_pem: string;
   public_key_pem: string;
@@ -40,6 +66,12 @@ type ca_options_t = {
 };
 
 class CertificateAuthority {
+  // certificate datastore
+  ca_store!: CertificateStore;
+
+  // loaded context
+  ca_loaded_ctx!: ca_loaded_context_t;
+
   // base folder for the CA
   base_ca_folder!: string;
 
@@ -59,6 +91,9 @@ class CertificateAuthority {
     public_key: string;
   };
 
+  // a hash of the contents of all pems used for this ca.
+  ca_pems_sha1!: string;
+
   // certificate authority file paths
   ca_file_paths: {
     ca_cert?: string;
@@ -73,122 +108,43 @@ class CertificateAuthority {
   }
 
   // Initialize the CA
-  async init() {
+  async init(params: {
+    name: string;
+    description: string;
+    file: string;
+    ca_attrs?: Forge.pki.CertificateField[];
+  }) {
     // set self reference
     const ca_ref = this;
 
-    // create base_ca_folder
-    if (!(await ca_ref.directoryExistsAndIsReadable(ca_ref.base_ca_folder)))
-      if (!(await ca_ref.mkdirp(ca_ref.base_ca_folder)))
-        throw new Error(
-          'certificate_authority__init_failed__could_not_create_base_ca_folder'
-        );
+    // open the ca store
+    ca_ref.ca_store = new CertificateStore({
+      file: params.file
+    });
 
-    // create certs_folder
-    if (!(await ca_ref.directoryExistsAndIsReadable(ca_ref.certs_folder)))
-      if (!(await ca_ref.mkdirp(ca_ref.certs_folder)))
-        throw new Error(
-          'certificate_authority__init_failed__could_not_create_certs_folder'
-        );
-
-    // keys_folder
-    if (!(await ca_ref.directoryExistsAndIsReadable(ca_ref.keys_folder)))
-      if (!(await ca_ref.mkdirp(ca_ref.keys_folder)))
-        throw new Error(
-          'certificate_authority__init_failed__could_not_create_keys_folder'
-        );
-
-    ca_ref.ca_file_paths.ca_cert = path.join(ca_ref.certs_folder, 'ca.pem');
-
-    ca_ref.ca_file_paths.ca_private_key = path.join(
-      ca_ref.keys_folder,
-      'ca.private.key'
-    );
-
-    ca_ref.ca_file_paths.ca_public_key = path.join(
-      ca_ref.keys_folder,
-      'ca.public.key'
-    );
-
-    // load or generate files
-    if (!(await ca_ref.loadCertificateAuthorityFiles())) {
-      await ca_ref.generateCertificateAuthorityFiles();
+    // attempt to lookup ca pems if we have any, if we have none, create new ones.
+    let ca_pems = await ca_ref.ca_store.getCAPems({ name: params.name });
+    if (ca_pems) {
+      // set the loaded context from pems
+      ca_ref.ca_loaded_ctx = {
+        name: ca_pems.name,
+        description: ca_pems.description,
+        ca_cert: Forge.pki.certificateFromPem(ca_pems.ca_cert_pem),
+        ca_keys: {
+          privateKey: Forge.pki.privateKeyFromPem(ca_pems.ca_private_key_pem),
+          publicKey: Forge.pki.publicKeyFromPem(ca_pems.ca_public_key_pem)
+        },
+        ca_pems_sha1: ca_pems.ca_pems_sha1,
+        ca_attrs: JSON.parse(ca_pems.ca_attrs),
+        ca_cert_pem: ca_pems.ca_cert_pem,
+        ca_private_key_pem: ca_pems.ca_private_key_pem,
+        ca_public_key_pem: ca_pems.ca_public_key_pem,
+        loaded_from_record: ca_pems
+      };
+      return true;
     }
-  }
 
-  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  // %%% Load or Generate CA Files %%%%%%%%%%%%%%%%%
-  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-  // These methods load or generate the cert/keys for the CA itself,
-  // eg. "ca.pem" | "ca.public.key" | "ca.private.key"
-
-  // Attempt to load certificate authority files from the filesystem.
-  async loadCertificateAuthorityFiles(): Promise<boolean> {
-    // set self reference
-    const ca_ref = this;
-
-    // ensure mandatory files are set
-    if (!ca_ref.ca_file_paths.ca_cert) return false;
-    if (!ca_ref.ca_file_paths.ca_private_key) return false;
-    if (!ca_ref.ca_file_paths.ca_public_key) return false;
-
-    // check that all necessary ca parts exist
-    const ca_cert_exists = await ca_ref.fileExistsAndIsReadable(
-      ca_ref.ca_file_paths.ca_cert
-    );
-    const ca_private_key_exists = await ca_ref.fileExistsAndIsReadable(
-      ca_ref.ca_file_paths.ca_private_key
-    );
-    const ca_public_key_exists = await ca_ref.fileExistsAndIsReadable(
-      ca_ref.ca_file_paths.ca_public_key
-    );
-
-    // iof the files don't exist, we can't load anything
-    if (!ca_cert_exists || !ca_private_key_exists || !ca_public_key_exists)
-      return false;
-
-    // read ca cert
-    const ca_cert_content = await fs_promises.readFile(
-      ca_ref.ca_file_paths.ca_cert
-    );
-
-    // read ca priv key
-    const ca_private_key_content = await fs_promises.readFile(
-      ca_ref.ca_file_paths.ca_private_key
-    );
-
-    // read ca pub key
-    const ca_public_key_content = await fs_promises.readFile(
-      ca_ref.ca_file_paths.ca_public_key
-    );
-
-    // store ca pems for future reference
-    ca_ref.ca_pems = {
-      cert: ca_cert_content.toString(),
-      private_key: ca_private_key_content.toString(),
-      public_key: ca_public_key_content.toString()
-    };
-
-    // set cert
-    ca_ref.ca_cert = Forge.pki.certificateFromPem(ca_ref.ca_pems.cert);
-
-    // set keys
-    ca_ref.ca_keys = {
-      privateKey: Forge.pki.privateKeyFromPem(ca_ref.ca_pems.private_key),
-      publicKey: Forge.pki.publicKeyFromPem(ca_ref.ca_pems.public_key)
-    };
-
-    // return indicating success
-    return true;
-  }
-
-  // If certificate authority files are missing, we use this to generate thrm
-  async generateCertificateAuthorityFiles() {
-    // set self reference
-    const ca_ref = this;
-
-    // generate the keypair
+    // generate a keypair and set keypair from generation callback result
     const key_gen_deferred: Deferred<Forge.pki.rsa.KeyPair, string> =
       new Deferred<Forge.pki.rsa.KeyPair, string>();
     Forge.pki.rsa.generateKeyPair(
@@ -197,12 +153,10 @@ class CertificateAuthority {
         key_gen_deferred.resolve(keys);
       }
     );
-
-    // set keypair from generation callback result
     const keypair: Forge.pki.rsa.KeyPair = await key_gen_deferred.promise;
 
     // create a new certificate
-    const cert: Forge.pki.Certificate = Forge.pki.createCertificate();
+    const cert = Forge.pki.createCertificate();
 
     // set public key
     cert.publicKey = keypair.publicKey;
@@ -218,32 +172,35 @@ class CertificateAuthority {
       cert.validity.notBefore.getFullYear() + 1
     );
 
-    const CAattrs = [
-      {
-        name: 'commonName',
-        value: 'NodeMITMProxyCA'
-      },
-      {
-        name: 'countryName',
-        value: 'Internet'
-      },
-      {
-        shortName: 'ST',
-        value: 'Internet'
-      },
-      {
-        name: 'localityName',
-        value: 'Internet'
-      },
-      {
-        name: 'organizationName',
-        value: 'Node MITM Proxy CA'
-      },
-      {
-        shortName: 'OU',
-        value: 'CA'
-      }
-    ];
+    // set attrs
+    let CAattrs: Forge.pki.CertificateField[] | undefined = params.ca_attrs;
+    if (!CAattrs)
+      CAattrs = [
+        {
+          name: 'commonName',
+          value: 'DefaultCACommonName'
+        },
+        {
+          name: 'countryName',
+          value: 'Internet'
+        },
+        {
+          shortName: 'ST',
+          value: 'Internet'
+        },
+        {
+          name: 'localityName',
+          value: 'Internet'
+        },
+        {
+          name: 'organizationName',
+          value: 'Default Organizational Name'
+        },
+        {
+          shortName: 'OU',
+          value: 'CA'
+        }
+      ];
 
     // set subject/issuer
     cert.setSubject(CAattrs);
@@ -295,30 +252,57 @@ class CertificateAuthority {
     ca_ref.ca_cert = cert;
     ca_ref.ca_keys = keypair;
 
-    // write ca cert pem
-    const ca_cert_path = path.join(ca_ref.certs_folder, 'ca.pem');
+    // generate pems
     const ca_cert_pem = Forge.pki.certificateToPem(cert);
-    await fs_promises.writeFile(ca_cert_path, ca_cert_pem);
-    ca_ref.ca_file_paths.ca_cert = ca_cert_path;
-
-    // write ca private key
-    const ca_private_key_path = path.join(ca_ref.keys_folder, 'ca.private.key');
     const ca_private_key_pem = Forge.pki.privateKeyToPem(keypair.privateKey);
-    await fs_promises.writeFile(ca_private_key_path, ca_private_key_pem);
-    ca_ref.ca_file_paths.ca_private_key = ca_private_key_path;
-
-    // write ca public key
-    const ca_public_key_path = path.join(ca_ref.keys_folder, 'ca.public.key');
     const ca_public_key_pem = Forge.pki.publicKeyToPem(keypair.publicKey);
-    await fs_promises.writeFile(ca_public_key_path, ca_public_key_pem);
-    ca_ref.ca_file_paths.ca_public_key = ca_public_key_path;
 
-    // return indicating success
+    // set pem sha1
+    ca_ref.ca_pems_sha1 = crypto
+      .createHash('sha1')
+      .update(ca_cert_pem + ca_private_key_pem + ca_public_key_pem)
+      .digest('hex');
+
+    // try to add to the ca store
+    try {
+      await ca_ref.ca_store.addCAPems({
+        name: params.name,
+        description: params.description,
+        ca_pems_sha1: ca_ref.ca_pems_sha1,
+        ca_attrs: CAattrs,
+        ca_cert: ca_cert_pem,
+        ca_private_key: ca_private_key_pem,
+        ca_public_key: ca_public_key_pem
+      });
+    } catch (err) {}
+
+    // --- load and parse new record
+
+    // attempt to lookup ca pems if we have any, if we have none, create new ones.
+    ca_pems = await ca_ref.ca_store.getCAPems({ name: params.name });
+    if (!ca_pems) return false;
+
+    // set the loaded context from pems
+    ca_ref.ca_loaded_ctx = {
+      name: ca_pems.name,
+      description: ca_pems.description,
+      ca_cert: Forge.pki.certificateFromPem(ca_pems.ca_cert_pem),
+      ca_keys: {
+        privateKey: Forge.pki.privateKeyFromPem(ca_pems.ca_private_key_pem),
+        publicKey: Forge.pki.publicKeyFromPem(ca_pems.ca_public_key_pem)
+      },
+      ca_pems_sha1: ca_pems.ca_pems_sha1,
+      ca_attrs: JSON.parse(ca_pems.ca_attrs),
+      ca_cert_pem: ca_pems.ca_cert_pem,
+      ca_private_key_pem: ca_pems.ca_private_key_pem,
+      ca_public_key_pem: ca_pems.ca_public_key_pem,
+      loaded_from_record: ca_pems
+    };
     return true;
   }
 
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  // %%% Cert/Key Generators %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  // %%% HTTP MITM Cert/Key Generators %%%%%%%%%%%%%%%%%%%
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
   /**
@@ -327,7 +311,7 @@ class CertificateAuthority {
    */
   async generateServerCertificateAndKeysPEMSet(
     hosts: string[]
-  ): Promise<ca_mitm_https_server_pems_t> {
+  ): Promise<ca_signed_https_pems_t> {
     // set self reference
     const ca_ref = this;
 
@@ -337,13 +321,45 @@ class CertificateAuthority {
       .update(hosts.join(','))
       .digest('hex');
 
+    // lookup pem set record if available
+    let pem_set_record: ca_signed_https_pems_record_t =
+      await ca_ref.ca_store.getCASignedPEMSet({
+        ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+        hosts_unique_sha1: hosts_unique_sha1
+      });
+
+    // if we have a record, just parse and return it
+    if (pem_set_record) {
+      // generate pem set
+      return {
+        ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+        pems_sha1: pem_set_record.pems_sha1,
+        hosts: JSON.parse(pem_set_record.hosts),
+        hosts_unique_sha1: pem_set_record.hosts_unique_sha1,
+        loaded: {
+          cert: Forge.pki.certificateFromPem(pem_set_record.cert_pem),
+          keys: {
+            publicKey: Forge.pki.publicKeyFromPem(
+              pem_set_record.public_key_pem
+            ),
+            privateKey: Forge.pki.privateKeyFromPem(
+              pem_set_record.private_key_pem
+            )
+          }
+        },
+        cert_pem: pem_set_record.cert_pem,
+        private_key_pem: pem_set_record.private_key_pem,
+        public_key_pem: pem_set_record.public_key_pem
+      };
+    }
+
     // set main host
     const main_host = hosts[0];
 
-    const key_for_server = Forge.pki.rsa.generateKeyPair(2048);
+    const keys_for_server = Forge.pki.rsa.generateKeyPair(2048);
     const cert_for_server = Forge.pki.createCertificate();
 
-    cert_for_server.publicKey = key_for_server.publicKey;
+    cert_for_server.publicKey = keys_for_server.publicKey;
     cert_for_server.serialNumber = this.randomSerialNumber();
     cert_for_server.validity.notBefore = new Date();
     cert_for_server.validity.notBefore.setDate(
@@ -385,7 +401,7 @@ class CertificateAuthority {
     });
 
     cert_for_server.setSubject(attrsServer);
-    cert_for_server.setIssuer(this.ca_cert.issuer.attributes);
+    cert_for_server.setIssuer(ca_ref.ca_loaded_ctx.ca_cert.issuer.attributes);
 
     const ServerExtensions = [
       {
@@ -452,73 +468,56 @@ class CertificateAuthority {
     cert_for_server.setExtensions(server_extensions);
 
     // sign the cert with the certificate authorities private key
-    cert_for_server.sign(ca_ref.ca_keys.privateKey, Forge.md.sha256.create());
+    cert_for_server.sign(
+      ca_ref.ca_loaded_ctx.ca_keys.privateKey,
+      Forge.md.sha256.create()
+    );
+
+    // convert bins to pems
+    const cert_pem = Forge.pki.certificateToPem(cert_for_server);
+    const private_key_pem = Forge.pki.privateKeyToPem(
+      keys_for_server.privateKey
+    );
+    const public_key_pem = Forge.pki.publicKeyToPem(keys_for_server.publicKey);
+
+    // hash the pems to create a unique identifier
+    const pems_sha1 = crypto
+      .createHash('sha1')
+      .update(cert_pem + private_key_pem + public_key_pem)
+      .digest('hex');
 
     // generate pem set
-    const pem_set: ca_mitm_https_server_pems_t = {
+    const pem_set: ca_signed_https_pems_t = {
+      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+      pems_sha1: pems_sha1,
+      hosts: hosts,
       hosts_unique_sha1: hosts_unique_sha1,
+      loaded: {
+        cert: cert_for_server,
+        keys: keys_for_server
+      },
       cert_pem: Forge.pki.certificateToPem(cert_for_server),
-      private_key_pem: Forge.pki.privateKeyToPem(key_for_server.privateKey),
-      public_key_pem: Forge.pki.publicKeyToPem(key_for_server.publicKey)
+      private_key_pem: Forge.pki.privateKeyToPem(keys_for_server.privateKey),
+      public_key_pem: Forge.pki.publicKeyToPem(keys_for_server.publicKey)
     };
+
+    // add to ca store
+    await ca_ref.ca_store.addCASignedPEMSet(pem_set);
+
+    // lookup record
+    pem_set_record = await ca_ref.ca_store.getCASignedPEMSet({
+      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+      hosts_unique_sha1: pem_set.hosts_unique_sha1
+    });
+    if (!pem_set_record) return null as unknown as ca_signed_https_pems_t;
 
     // return the pem set
     return pem_set;
   }
 
-  async storeServerCertficiateAndKeysPEMSet(
-    hosts_unique_sha1: string
-  ): Promise<ca_mitm_https_server_pems_t> {
-    return null as unknown as ca_mitm_https_server_pems_t;
-  }
-
-  async loadServerCertficiateAndKeysPEMSet(
-    hosts_unique_sha1: string
-  ): Promise<ca_mitm_https_server_pems_t> {
-    return null as unknown as ca_mitm_https_server_pems_t;
-  }
-
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-  // %%% File/Directory Utilities %%%%%%%%%%%%%%%%%%
+  // %%% Utilities %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-  async directoryExistsAndIsReadable(dirPath: string): Promise<boolean> {
-    try {
-      await fs_promises.access(
-        dirPath,
-        fs_promises.constants.F_OK | fs_promises.constants.R_OK
-      );
-      const stats = await fs_promises.stat(dirPath);
-      return stats.isDirectory();
-    } catch {
-      return false;
-    }
-  }
-
-  async fileExistsAndIsReadable(filePath: string): Promise<boolean> {
-    try {
-      await fs_promises.access(
-        filePath,
-        fs_promises.constants.F_OK | fs_promises.constants.R_OK
-      );
-      // File exists and is readable
-      return true;
-    } catch {
-      // Either doesn't exist or not readable
-      return false;
-    }
-  }
-
-  // mkdir -p
-  async mkdirp(dirPath: string): Promise<boolean> {
-    const fullPath = path.resolve(dirPath);
-    try {
-      await fs_promises.mkdir(fullPath, { recursive: true });
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
 
   // generate random 16 bytes hex string
   randomSerialNumber() {
@@ -530,10 +529,6 @@ class CertificateAuthority {
     }
     return sn;
   }
-
-  getPem() {
-    return Forge.pki.certificateToPem(this.ca_cert);
-  }
 }
 
-export { CertificateAuthority, ca_options_t, ca_mitm_https_server_pems_t };
+export { CertificateAuthority, ca_options_t, ca_signed_https_pems_t };
