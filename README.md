@@ -69,9 +69,21 @@ import { CertificateAuthority } from '@opsimathically/certificateauthority';
     ]
   });
 
-  // generate keys/pems/etc
-  const keys_and_pems_for_mitm_hosts =
+  // Note: the reason we use hosts here is because our use case
+  //       has a client give us hosts, to which we need to generate
+  //       certs for to mitm.
+
+  // generate keys/pems/etc for hosts
+  let keys_and_pems_for_mitm_hosts =
     await certificate_authority.generateServerCertificateAndKeysPEMSet([
+      'hello.com',
+      '0.0.0.0',
+      '255.255.255.255'
+    ]);
+
+  // you can also lookup items using hosts after generation
+  keys_and_pems_for_mitm_hosts =
+    await certificate_authority.getSignedPEMSetByHosts([
       'hello.com',
       '0.0.0.0',
       '255.255.255.255'
@@ -93,5 +105,15 @@ import { CertificateAuthority } from '@opsimathically/certificateauthority';
     public_key_pem: Forge.pki.publicKeyToPem(keys_for_server.publicKey)
   };
   */
+
+  // you can also remove them by hosts
+  await certificate_authority.removeSignedPEMSetByHosts([
+    'hello.com',
+    '0.0.0.0',
+    '255.255.255.255'
+  ]);
+
+  // to remove/get by other criteria, or to lookup by other criteria check
+  // certificate_authority.ca_store methods.
 })();
 ```
