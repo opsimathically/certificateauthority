@@ -30,47 +30,68 @@ clone this repo, enter directory, and run `npm install` for dev dependencies, th
 [See unit tests for more direct usage examples](https://github.com/opsimathically/certificateauthority/blob/main/test/certificateauthority.test.ts)
 
 ```typescript
-const db_file_path = path.join(__dirname, './test_certs/test.sqlitedb');
+import { CertificateAuthority } from '@opsimathically/certificateauthority';
 
-// create and initialize the CA
-const certificate_authority = new CertificateAuthority();
-await certificate_authority.init({
-  name: 'name_of_your_ca_whatever_you_want',
-  description: 'Any description of your CA.',
-  file: path.join(__dirname, './path_to/your.sqlite.db'),
-  ca_attrs: [
-    {
-      name: 'commonName',
-      value: 'any_name'
-    },
-    {
-      name: 'countryName',
-      value: 'Internet'
-    },
-    {
-      shortName: 'ST',
-      value: 'Internet'
-    },
-    {
-      name: 'localityName',
-      value: 'Internet'
-    },
-    {
-      name: 'organizationName',
-      value: 'any_organizational_name'
-    },
-    {
-      shortName: 'OU',
-      value: 'CA'
-    }
-  ]
-});
+(async function () {
+  const db_file_path = path.join(__dirname, './test_certs/test.sqlitedb');
 
-// generate keys/pems/etc
-const keys_and_pems_for_mitm_hosts =
-  await certificate_authority.generateServerCertificateAndKeysPEMSet([
-    'hello.com',
-    '0.0.0.0',
-    '255.255.255.255'
-  ]);
+  // create and initialize the CA
+  const certificate_authority = new CertificateAuthority();
+  await certificate_authority.init({
+    name: 'name_of_your_ca_whatever_you_want',
+    description: 'Any description of your CA.',
+    file: path.join(__dirname, './path_to/your.sqlite.db'),
+    ca_attrs: [
+      {
+        name: 'commonName',
+        value: 'any_name'
+      },
+      {
+        name: 'countryName',
+        value: 'Internet'
+      },
+      {
+        shortName: 'ST',
+        value: 'Internet'
+      },
+      {
+        name: 'localityName',
+        value: 'Internet'
+      },
+      {
+        name: 'organizationName',
+        value: 'any_organizational_name'
+      },
+      {
+        shortName: 'OU',
+        value: 'CA'
+      }
+    ]
+  });
+
+  // generate keys/pems/etc
+  const keys_and_pems_for_mitm_hosts =
+    await certificate_authority.generateServerCertificateAndKeysPEMSet([
+      'hello.com',
+      '0.0.0.0',
+      '255.255.255.255'
+    ]);
+
+  /*
+  // keys_and_pems_for_mitm_hosts is returned as ca_signed_https_pems_t, looking similar to:
+  {
+    ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+    pems_sha1: pems_sha1,
+    hosts: hosts,
+    hosts_unique_sha1: hosts_unique_sha1,
+    loaded: {
+      cert: cert_for_server,
+      keys: keys_for_server
+    },
+    cert_pem: Forge.pki.certificateToPem(cert_for_server),
+    private_key_pem: Forge.pki.privateKeyToPem(keys_for_server.privateKey),
+    public_key_pem: Forge.pki.publicKeyToPem(keys_for_server.publicKey)
+  };
+  */
+})();
 ```
