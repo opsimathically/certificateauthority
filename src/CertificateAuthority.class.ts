@@ -19,7 +19,6 @@ https://www.npmjs.com/package/node-forge
 */
 
 // import fs promises api
-import * as fs_promises from 'node:fs/promises';
 import crypto from 'crypto';
 
 // old imports
@@ -61,10 +60,6 @@ type ca_signed_https_pems_t = {
   public_key_pem: string;
 };
 
-type ca_options_t = {
-  ca_folder: string;
-};
-
 class CertificateAuthority {
   // certificate datastore
   ca_store!: CertificateStore;
@@ -72,40 +67,7 @@ class CertificateAuthority {
   // loaded context
   ca_loaded_ctx!: ca_loaded_context_t;
 
-  // base folder for the CA
-  base_ca_folder!: string;
-
-  // cert folder (where certs are stored)
-  certs_folder!: string;
-
-  // keys folder (where keys are stored)
-  keys_folder!: string;
-
-  // certificate authority cert and keys
-  ca_cert!: ReturnType<typeof Forge.pki.createCertificate>;
-  ca_keys!: ReturnType<typeof Forge.pki.rsa.generateKeyPair>;
-
-  ca_pems!: {
-    cert: string;
-    private_key: string;
-    public_key: string;
-  };
-
-  // a hash of the contents of all pems used for this ca.
-  ca_pems_sha1!: string;
-
-  // certificate authority file paths
-  ca_file_paths: {
-    ca_cert?: string;
-    ca_private_key?: string;
-    ca_public_key?: string;
-  } = {};
-
-  constructor(options: ca_options_t) {
-    this.base_ca_folder = options.ca_folder;
-    this.certs_folder = path.join(this.base_ca_folder, 'certs');
-    this.keys_folder = path.join(this.base_ca_folder, 'keys');
-  }
+  constructor() {}
 
   // Initialize the CA
   async init(params: {
@@ -113,7 +75,7 @@ class CertificateAuthority {
     description: string;
     file: string;
     ca_attrs?: Forge.pki.CertificateField[];
-  }) {
+  }): Promise<boolean> {
     // set self reference
     const ca_ref = this;
 
@@ -124,6 +86,7 @@ class CertificateAuthority {
 
     // attempt to lookup ca pems if we have any, if we have none, create new ones.
     let ca_pems = await ca_ref.ca_store.getCAPems({ name: params.name });
+
     if (ca_pems) {
       // set the loaded context from pems
       ca_ref.ca_loaded_ctx = {
@@ -141,6 +104,7 @@ class CertificateAuthority {
         ca_public_key_pem: ca_pems.ca_public_key_pem,
         loaded_from_record: ca_pems
       };
+
       return true;
     }
 
@@ -154,9 +118,11 @@ class CertificateAuthority {
       }
     );
     const keypair: Forge.pki.rsa.KeyPair = await key_gen_deferred.promise;
+    if (!keypair) return false;
 
     // create a new certificate
     const cert = Forge.pki.createCertificate();
+    if (!cert) return false;
 
     // set public key
     cert.publicKey = keypair.publicKey;
@@ -245,20 +211,16 @@ class CertificateAuthority {
     // set extensions
     cert.setExtensions(CAextensions);
 
-    // sign
+    // sign certificate
     cert.sign(keypair.privateKey, Forge.md.sha256.create());
-
-    // set cert/keypair in class
-    ca_ref.ca_cert = cert;
-    ca_ref.ca_keys = keypair;
 
     // generate pems
     const ca_cert_pem = Forge.pki.certificateToPem(cert);
     const ca_private_key_pem = Forge.pki.privateKeyToPem(keypair.privateKey);
     const ca_public_key_pem = Forge.pki.publicKeyToPem(keypair.publicKey);
 
-    // set pem sha1
-    ca_ref.ca_pems_sha1 = crypto
+    // create pems sha1
+    const ca_pems_sha1 = crypto
       .createHash('sha1')
       .update(ca_cert_pem + ca_private_key_pem + ca_public_key_pem)
       .digest('hex');
@@ -268,13 +230,15 @@ class CertificateAuthority {
       await ca_ref.ca_store.addCAPems({
         name: params.name,
         description: params.description,
-        ca_pems_sha1: ca_ref.ca_pems_sha1,
+        ca_pems_sha1: ca_pems_sha1,
         ca_attrs: CAattrs,
         ca_cert: ca_cert_pem,
         ca_private_key: ca_private_key_pem,
         ca_public_key: ca_public_key_pem
       });
-    } catch (err) {}
+    } catch (err) {
+      return false;
+    }
 
     // --- load and parse new record
 
@@ -324,7 +288,7 @@ class CertificateAuthority {
     // lookup pem set record if available
     let pem_set_record: ca_signed_https_pems_record_t =
       await ca_ref.ca_store.getCASignedPEMSet({
-        ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+        ca_pems_sha1: ca_ref?.ca_loaded_ctx?.ca_pems_sha1,
         hosts_unique_sha1: hosts_unique_sha1
       });
 
@@ -401,6 +365,7 @@ class CertificateAuthority {
     });
 
     cert_for_server.setSubject(attrsServer);
+
     cert_for_server.setIssuer(ca_ref.ca_loaded_ctx.ca_cert.issuer.attributes);
 
     const ServerExtensions = [
@@ -531,4 +496,4 @@ class CertificateAuthority {
   }
 }
 
-export { CertificateAuthority, ca_options_t, ca_signed_https_pems_t };
+export { CertificateAuthority, ca_signed_https_pems_t };

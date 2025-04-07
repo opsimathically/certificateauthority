@@ -1,5 +1,6 @@
 /* eslint-disable no-debugger */
 /* eslint-disable @typescript-eslint/no-unused-vars */
+import fs_promises from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
@@ -13,16 +14,15 @@ import { CertificateStore } from '@src/CertificateStore.class';
 // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 (async function () {
-  test('Create CertificateAuthority.', async function () {
-    const certificate_authority = new CertificateAuthority({
-      ca_folder: path.resolve(__dirname, 'test_certs')
-    });
+  test('Create CertificateAuthority, initialize with new context, create a pemset, delete context, delete pemset, verify.', async function () {
+    const db_file_path = path.join(__dirname, './test_certs/test.sqlitedb');
 
-    // initialize the ca
+    // create and initialize the CA
+    const certificate_authority = new CertificateAuthority();
     await certificate_authority.init({
       name: 'ca_unit_test',
       description: 'Used for testing.',
-      file: path.join(__dirname, './test_certs/test.db'),
+      file: db_file_path,
       ca_attrs: [
         {
           name: 'commonName',
@@ -51,7 +51,8 @@ import { CertificateStore } from '@src/CertificateStore.class';
       ]
     });
 
-    debugger;
+    // ensure the ctx was loaded from a db record (should always be a positive integer)
+    assert(certificate_authority.ca_loaded_ctx.loaded_from_record.id);
 
     // generate keys
     const certkeys =
@@ -61,45 +62,61 @@ import { CertificateStore } from '@src/CertificateStore.class';
         '255.255.255.255'
       ]);
 
-    // remove ca pems
+    // ensure we have a loaded cert
+    assert(certkeys.loaded.cert);
+
+    // ensure we have a database handle
+    assert(certificate_authority.ca_store.db);
+
+    // pull all ca_data records
+    let ca_data_records = certificate_authority.ca_store.db
+      .prepare(`SELECT * from ca_data;`)
+      .all();
+
+    // ensure database has exactly one record for the ca_data table
+    assert(Array.isArray(ca_data_records));
+    assert(ca_data_records.length === 1);
+
+    // pull all ca_signed_pem_sets records
+    let ca_signed_pem_sets_records = certificate_authority.ca_store.db
+      .prepare(`SELECT * from ca_signed_pem_sets;`)
+      .all();
+
+    // ensure database has exactly one record for the ca_signed_pem_sets table
+    assert(Array.isArray(ca_signed_pem_sets_records));
+    assert(ca_signed_pem_sets_records.length === 1);
+
+    // remove ca record
     await certificate_authority.ca_store.removeCAPems({
       name: certificate_authority.ca_loaded_ctx.name
     });
 
+    // remove signed pem set record
     await certificate_authority.ca_store.removeCASignedPEMSet({
       ca_pems_sha1: certkeys.ca_pems_sha1,
       pems_sha1: certkeys.pems_sha1,
       hosts_unique_sha1: certkeys.hosts_unique_sha1
     });
 
-    debugger;
-    /*
-    // generate keys
-    const certkeys =
-      await certificate_authority.generateServerCertificateAndKeysPEMSet([
-        'hello.com',
-        '0.0.0.0',
-        '255.255.255.255'
-      ]);
+    // pull all ca_data records
+    ca_data_records = certificate_authority.ca_store.db
+      .prepare(`SELECT * from ca_data;`)
+      .all();
 
-    const certificate_store = new CertificateStore({
-      file: path.join(__dirname, './test_certs/test.db')
-    });
+    // record set should be empty array now
+    assert(Array.isArray(ca_data_records));
+    assert(ca_data_records.length === 0);
 
-    certificate_store.insert(certkeys);
-    */
-    debugger;
+    // pull all ca_signed_pem_sets records
+    ca_signed_pem_sets_records = certificate_authority.ca_store.db
+      .prepare(`SELECT * from ca_signed_pem_sets;`)
+      .all();
 
-    // generate keys
-    /*
-     opsiproxy_ref.ca.generateServerCertificateKeys(
-        hosts,
-        (certPEM: any, privateKeyPEM: any) => {
-          cert_pem = certPEM;
-          private_key_pem = privateKeyPEM;
-          cert_deferred.resolve(true);
-        }
-      );
-    */
+    // record set should be empty array now
+    assert(Array.isArray(ca_signed_pem_sets_records));
+    assert(ca_signed_pem_sets_records.length === 0);
+
+    // remove the test database
+    await fs_promises.unlink(db_file_path);
   });
 })();

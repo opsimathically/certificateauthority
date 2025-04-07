@@ -218,6 +218,10 @@ class CertificateStore {
   }): Promise<ca_signed_https_pems_record_t> {
     const cs_ref = this;
 
+    // ensure we have a ca pems set
+    if (!params.ca_pems_sha1)
+      return null as unknown as ca_signed_https_pems_record_t;
+
     if (!params?.hosts_unique_sha1) {
       // must have either unique sha, or host set
       if (!params.hosts)
