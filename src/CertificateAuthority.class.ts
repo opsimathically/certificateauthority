@@ -1,13 +1,10 @@
-/* eslint-disable no-empty */
-/* eslint-disable no-debugger */
 /* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-unsafe-function-type */
 /* eslint-disable @typescript-eslint/no-this-alias */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /*
 Attribution:
-This code is a modernization/cleaning of this MIT code.  I've updated it to use
+This code is a modernization/cleaning of node-http-mitm-proxy CA code.  I've updated it to use
 async/await rather than callbacks, etc.
 https://github.com/joeferner/node-http-mitm-proxy/blob/master/lib/ca.ts
 
@@ -18,11 +15,7 @@ and why things are happening.
 https://www.npmjs.com/package/node-forge
 */
 
-// import fs promises api
 import crypto from 'crypto';
-
-// old imports
-import path from 'node:path';
 import Forge from 'node-forge';
 import { Deferred } from '@opsimathically/deferred';
 
@@ -67,6 +60,7 @@ class CertificateAuthority {
   // loaded context
   ca_loaded_ctx!: ca_loaded_context_t;
 
+  // class constructor
   constructor() {}
 
   // Initialize the CA
@@ -496,4 +490,4 @@ class CertificateAuthority {
   }
 }
 
-export { CertificateAuthority, ca_signed_https_pems_t };
+export { CertificateAuthority, ca_loaded_context_t, ca_signed_https_pems_t };

@@ -1,13 +1,8 @@
-/* eslint-disable no-debugger */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import fs_promises from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert';
 import path from 'node:path';
-import { deepEqual } from 'fast-equals';
-import { SqliteError } from 'better-sqlite3';
 import { CertificateAuthority } from '@src/CertificateAuthority.class';
-import { CertificateStore } from '@src/CertificateStore.class';
 
 // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 // %%% Test Definitions %%%%%%%%%%%%%%%%%%%%%%%

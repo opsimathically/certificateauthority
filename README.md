@@ -1,8 +1,15 @@
 # certificateauthority
 
-DO NOT USE, THIS IS A WORK IN PROGRESS. WILL UPDATE THIS README WITH INDICATION WHEN READY.
+Create a CA, issue keys/certs from that CA. Decrypt/mitm data using CA/keys certs. Useful for proxies, etc.
 
-This is a update/modernization of the certificate authority capability found within node-mitm-http-proxy.
+This code is a modernization/cleaning of [this](https://github.com/joeferner/node-http-mitm-proxy/blob/master/lib/ca.ts) mitm proxy code. It's been updated to use async/await instead of callbacks.
+It now uses a sqlite certificate store instead of storing certs/keys on the filesystem directly. This will
+remove the possibility of large numbers of dangling files, as well as make it easier to search for created
+cert sets.
+
+The main usecase of this code for me personally, is as a certificate authority for a HTTP mitm proxy, although
+I'm certain it could be useful in other places as well. For example, dynamically authorizing hosts/content on your own
+networks, behaving as the crypto authority for your own assets.
 
 ## Install
 
@@ -22,3 +29,48 @@ clone this repo, enter directory, and run `npm install` for dev dependencies, th
 
 [See unit tests for more direct usage examples](https://github.com/opsimathically/certificateauthority/blob/main/test/certificateauthority.test.ts)
 
+```typescript
+const db_file_path = path.join(__dirname, './test_certs/test.sqlitedb');
+
+// create and initialize the CA
+const certificate_authority = new CertificateAuthority();
+await certificate_authority.init({
+  name: 'name_of_your_ca_whatever_you_want',
+  description: 'Any description of your CA.',
+  file: path.join(__dirname, './path_to/your.sqlite.db'),
+  ca_attrs: [
+    {
+      name: 'commonName',
+      value: 'any_name'
+    },
+    {
+      name: 'countryName',
+      value: 'Internet'
+    },
+    {
+      shortName: 'ST',
+      value: 'Internet'
+    },
+    {
+      name: 'localityName',
+      value: 'Internet'
+    },
+    {
+      name: 'organizationName',
+      value: 'any_organizational_name'
+    },
+    {
+      shortName: 'OU',
+      value: 'CA'
+    }
+  ]
+});
+
+// generate keys/pems/etc
+const keys_and_pems_for_mitm_hosts =
+  await certificate_authority.generateServerCertificateAndKeysPEMSet([
+    'hello.com',
+    '0.0.0.0',
+    '255.255.255.255'
+  ]);
+```
