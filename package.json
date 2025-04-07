@@ -1,6 +1,6 @@
 {
   "name": "@opsimathically/certificateauthority",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Generates certs as a CA authority; stores them in a sqlite cert store.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
