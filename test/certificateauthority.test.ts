@@ -51,6 +51,8 @@ import { CertificateStore } from '@src/CertificateStore.class';
       ]
     });
 
+    debugger;
+
     // generate keys
     const certkeys =
       await certificate_authority.generateServerCertificateAndKeysPEMSet([
@@ -58,6 +60,17 @@ import { CertificateStore } from '@src/CertificateStore.class';
         '0.0.0.0',
         '255.255.255.255'
       ]);
+
+    // remove ca pems
+    await certificate_authority.ca_store.removeCAPems({
+      name: certificate_authority.ca_loaded_ctx.name
+    });
+
+    await certificate_authority.ca_store.removeCASignedPEMSet({
+      ca_pems_sha1: certkeys.ca_pems_sha1,
+      pems_sha1: certkeys.pems_sha1,
+      hosts_unique_sha1: certkeys.hosts_unique_sha1
+    });
 
     debugger;
     /*

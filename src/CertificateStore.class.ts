@@ -1,10 +1,7 @@
 /* eslint-disable @typescript-eslint/no-this-alias */
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
-import {
-  CertificateAuthority,
-  ca_signed_https_pems_t
-} from '@src/CertificateAuthority.class';
+import { ca_signed_https_pems_t } from '@src/CertificateAuthority.class';
 
 import Forge from 'node-forge';
 
@@ -94,6 +91,9 @@ class CertificateStore {
   // %%% Add/Remove %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+  /**
+   * Add CA pems.
+   */
   async addCAPems(params: ca_pems_params_t) {
     const cs_ref = this;
 
@@ -133,7 +133,9 @@ class CertificateStore {
       });
   }
 
-  // get ca pems
+  /**
+   * Get CA pems.
+   */
   async getCAPems(params: { name: string }): Promise<ca_pems_record_t> {
     const cs_ref = this;
 
@@ -146,27 +148,28 @@ class CertificateStore {
     return raw_record as unknown as ca_pems_record_t;
   }
 
+  /**
+   * Remove CA pems.
+   */
+  async removeCAPems(params: { name: string }): Promise<boolean> {
+    const cs_ref = this;
+
+    // prepare and run the query
+    cs_ref.db.prepare(`DELETE FROM ca_data where name = @name LIMIT 0,1;`).run({
+      name: params.name
+    });
+    return true;
+  }
+
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   // %%% Add/Remove %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+  /**
+   * Add a signed PEM set into the database.
+   */
   async addCASignedPEMSet(signed_pems: ca_signed_https_pems_t) {
     const cs_ref = this;
-
-    /*
-    CREATE TABLE IF NOT EXISTS ca_signed_pem_sets 
-    (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ca_pems_sha1 TEXT NOT NULL,
-        pems_sha1 TEXT NOT NULL,
-        hosts TEXT NOT NULL,
-        hosts_unique_sha1 TEXT NOT NULL,
-        cert_pem TEXT NOT NULL,
-        private_key_pem TEXT NOT NULL,
-        public_key_pem TEXT NOT NULL,
-        timestamp INTEGER DEFAULT (strftime('%s','now'))
-    );
-    */
 
     // prepare and run the query
     cs_ref.db
@@ -205,7 +208,9 @@ class CertificateStore {
       });
   }
 
-  // get ca pems
+  /**
+   * Lookup a signed PEM set.
+   */
   async getCASignedPEMSet(params: {
     ca_pems_sha1: string;
     hosts_unique_sha1?: string;
@@ -244,7 +249,48 @@ class CertificateStore {
     return raw_record as unknown as ca_signed_https_pems_record_t;
   }
 
-  remove() {}
+  /**
+   * Requires one or more unique sha1 constraint to be set.
+   */
+  async removeCASignedPEMSet(params: {
+    ca_pems_sha1: string;
+    pems_sha1: string;
+    hosts_unique_sha1: string;
+  }) {
+    const cs_ref = this;
+
+    // build prepared query based on available parameters; must have at
+    // least one constraint.
+    let query_str = `DELETE FROM ca_signed_pem_sets WHERE`;
+    const query_tail: { str: string; val: string }[] = [];
+    if (params.ca_pems_sha1) {
+      query_tail.push({ str: ` ca_pems_sha1 = ? `, val: params.ca_pems_sha1 });
+    }
+    if (params.pems_sha1) {
+      query_tail.push({ str: ` pems_sha1 = ? `, val: params.pems_sha1 });
+    }
+    if (params.hosts_unique_sha1) {
+      query_tail.push({
+        str: ` hosts_unique_sha1 = ? `,
+        val: params.hosts_unique_sha1
+      });
+    }
+
+    // ensure we have some constraints
+    if (!query_tail.length) return false;
+
+    const query_params: string[] = [];
+    for (let idx = 0; idx < query_tail.length; idx++) {
+      query_str += query_tail[idx].str;
+      query_params.push(query_tail[idx].val);
+      if (idx !== query_tail.length - 1) query_str += ' AND ';
+    }
+
+    // debugger;
+    // prepare and run the query
+    cs_ref.db.prepare(query_str).run(query_params);
+    return true;
+  }
 }
 
 export { CertificateStore, ca_pems_record_t, ca_signed_https_pems_record_t };
