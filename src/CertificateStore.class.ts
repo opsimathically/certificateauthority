@@ -229,7 +229,7 @@ class CertificateStore {
 
       params.hosts_unique_sha1 = crypto
         .createHash('sha1')
-        .update(params.hosts?.join(''))
+        .update(params.hosts?.join(','))
         .digest('hex');
     }
 
@@ -256,10 +256,10 @@ class CertificateStore {
   /**
    * Requires one or more unique sha1 constraint to be set.
    */
-  async removeCASignedPEMSet(params: {
+  async removeCASignedPEMSets(params: {
     ca_pems_sha1: string;
-    pems_sha1: string;
-    hosts_unique_sha1: string;
+    pems_sha1?: string;
+    hosts_unique_sha1?: string;
   }) {
     const cs_ref = this;
 

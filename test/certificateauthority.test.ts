@@ -49,19 +49,25 @@ import { CertificateAuthority } from '@src/CertificateAuthority.class';
     // ensure the ctx was loaded from a db record (should always be a positive integer)
     assert(certificate_authority.ca_loaded_ctx.loaded_from_record.id);
 
+    // create certs for these hosts
+    const host_set = ['hello.com', '0.0.0.0', '255.255.255.255'];
+
     // generate keys
     const certkeys =
-      await certificate_authority.generateServerCertificateAndKeysPEMSet([
-        'hello.com',
-        '0.0.0.0',
-        '255.255.255.255'
-      ]);
+      await certificate_authority.generateServerCertificateAndKeysPEMSet(
+        host_set
+      );
 
     // ensure we have a loaded cert
-    assert(certkeys.loaded.cert);
+    assert(certkeys?.loaded?.cert);
 
     // ensure we have a database handle
     assert(certificate_authority.ca_store.db);
+
+    // attempt to get/load a signed pem set from the sqlite db
+    const looked_up_cert_keys =
+      await certificate_authority.getSignedPEMSetByHosts(host_set);
+    assert(looked_up_cert_keys?.loaded?.cert);
 
     // pull all ca_data records
     let ca_data_records = certificate_authority.ca_store.db
@@ -87,7 +93,7 @@ import { CertificateAuthority } from '@src/CertificateAuthority.class';
     });
 
     // remove signed pem set record
-    await certificate_authority.ca_store.removeCASignedPEMSet({
+    await certificate_authority.ca_store.removeCASignedPEMSets({
       ca_pems_sha1: certkeys.ca_pems_sha1,
       pems_sha1: certkeys.pems_sha1,
       hosts_unique_sha1: certkeys.hosts_unique_sha1

@@ -269,47 +269,18 @@ class CertificateAuthority {
    */
   async generateServerCertificateAndKeysPEMSet(
     hosts: string[]
-  ): Promise<ca_signed_https_pems_t> {
+  ): Promise<ca_signed_https_pems_t | null> {
     // set self reference
     const ca_ref = this;
 
-    // create a unique hash of the hosts
-    const hosts_unique_sha1 = crypto
-      .createHash('sha1')
-      .update(hosts.join(','))
-      .digest('hex');
+    // check if we already have a signed pem set for these hosts, return those
+    // if they already exist.
+    const looked_up_pem_set = await ca_ref.getSignedPEMSetByHosts(hosts);
+    if (looked_up_pem_set) return looked_up_pem_set;
 
-    // lookup pem set record if available
-    let pem_set_record: ca_signed_https_pems_record_t =
-      await ca_ref.ca_store.getCASignedPEMSet({
-        ca_pems_sha1: ca_ref?.ca_loaded_ctx?.ca_pems_sha1,
-        hosts_unique_sha1: hosts_unique_sha1
-      });
-
-    // if we have a record, just parse and return it
-    if (pem_set_record) {
-      // generate pem set
-      return {
-        ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
-        pems_sha1: pem_set_record.pems_sha1,
-        hosts: JSON.parse(pem_set_record.hosts),
-        hosts_unique_sha1: pem_set_record.hosts_unique_sha1,
-        loaded: {
-          cert: Forge.pki.certificateFromPem(pem_set_record.cert_pem),
-          keys: {
-            publicKey: Forge.pki.publicKeyFromPem(
-              pem_set_record.public_key_pem
-            ),
-            privateKey: Forge.pki.privateKeyFromPem(
-              pem_set_record.private_key_pem
-            )
-          }
-        },
-        cert_pem: pem_set_record.cert_pem,
-        private_key_pem: pem_set_record.private_key_pem,
-        public_key_pem: pem_set_record.public_key_pem
-      };
-    }
+    // create hosts sha1 hash
+    const hosts_sha1_hash = ca_ref.createHostsSHA1(hosts);
+    if (!hosts_sha1_hash) return null;
 
     // set main host
     const main_host = hosts[0];
@@ -450,7 +421,7 @@ class CertificateAuthority {
       ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
       pems_sha1: pems_sha1,
       hosts: hosts,
-      hosts_unique_sha1: hosts_unique_sha1,
+      hosts_unique_sha1: hosts_sha1_hash,
       loaded: {
         cert: cert_for_server,
         keys: keys_for_server
@@ -463,15 +434,77 @@ class CertificateAuthority {
     // add to ca store
     await ca_ref.ca_store.addCASignedPEMSet(pem_set);
 
-    // lookup record
-    pem_set_record = await ca_ref.ca_store.getCASignedPEMSet({
-      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
-      hosts_unique_sha1: pem_set.hosts_unique_sha1
-    });
-    if (!pem_set_record) return null as unknown as ca_signed_https_pems_t;
+    // ensure we can lookup and parse pems
+    const pems_after_addition = await ca_ref.getSignedPEMSetByHosts(hosts);
+    if (!pems_after_addition) return null;
 
-    // return the pem set
-    return pem_set;
+    // return the pems
+    return pems_after_addition;
+  }
+
+  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  // %%% Lookups %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+  /**
+   * This is a utility method that just activates getCASignedPEMSet, filling in
+   * expected CA data so that the dev using this method only needs to supply hosts.
+   */
+  async getSignedPEMSetByHosts(
+    hosts: string[]
+  ): Promise<ca_signed_https_pems_t | null> {
+    // set self reference
+    const ca_ref = this;
+
+    // generate sha1 first
+    const hosts_sha1 = ca_ref.createHostsSHA1(hosts);
+    if (!hosts_sha1) return null;
+    if (hosts_sha1.length !== 40) return null;
+
+    // ask store for pem set
+    const pem_set_record = await ca_ref.ca_store.getCASignedPEMSet({
+      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+      hosts_unique_sha1: hosts_sha1
+    });
+
+    // if we have a record, just parse and return it
+    if (!pem_set_record) return null;
+
+    // generate pem set
+    return {
+      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+      pems_sha1: pem_set_record.pems_sha1,
+      hosts: JSON.parse(pem_set_record.hosts),
+      hosts_unique_sha1: pem_set_record.hosts_unique_sha1,
+      loaded: {
+        cert: Forge.pki.certificateFromPem(pem_set_record.cert_pem),
+        keys: {
+          publicKey: Forge.pki.publicKeyFromPem(pem_set_record.public_key_pem),
+          privateKey: Forge.pki.privateKeyFromPem(
+            pem_set_record.private_key_pem
+          )
+        }
+      },
+      cert_pem: pem_set_record.cert_pem,
+      private_key_pem: pem_set_record.private_key_pem,
+      public_key_pem: pem_set_record.public_key_pem
+    };
+  }
+
+  // Remove PEM sets by hosts
+  async removeSignedPEMSetByHosts(hosts: string[]): Promise<boolean> {
+    // set self reference
+    const ca_ref = this;
+
+    // ensure we have a host hash
+    const host_hash = ca_ref.createHostsSHA1(hosts);
+    if (!host_hash) return false;
+
+    // run the ca store remove method
+    return await ca_ref.ca_store.removeCASignedPEMSets({
+      ca_pems_sha1: ca_ref.ca_loaded_ctx.ca_pems_sha1,
+      hosts_unique_sha1: host_hash
+    });
   }
 
   // %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -487,6 +520,19 @@ class CertificateAuthority {
       )}`.slice(-8);
     }
     return sn;
+  }
+
+  // join a set of hosts and create a sha1
+  createHostsSHA1(hosts: string[]): string | null {
+    if (!hosts) return null;
+    if (!hosts.length) return null;
+    const generated_hash = crypto
+      .createHash('sha1')
+      .update(hosts.join(','))
+      .digest('hex');
+    if (!generated_hash) return null;
+    if (generated_hash.length !== 40) return null;
+    return generated_hash;
   }
 }
 
